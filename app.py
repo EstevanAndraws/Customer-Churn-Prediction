@@ -1,6 +1,7 @@
-
 import streamlit as st
-import requests
+import pandas as pd
+import numpy as np
+import joblib
 import json
 
 st.set_page_config(
@@ -9,8 +10,16 @@ st.set_page_config(
     layout="wide"
 )
 
-API_URL = "http://127.0.0.1:8000/predict"
+# Load model and preprocessor
+@st.cache_resource
+def load_artifacts():
+    model = joblib.load("customer_churn_model.pkl")
+    preprocessor = joblib.load("customer_churn_preprocessor.pkl")
+    return model, preprocessor
 
+model, preprocessor = load_artifacts()
+
+# Load feature configuration
 with open("feature_config.json", "r") as f:
     feature_config = json.load(f)
 
@@ -49,18 +58,34 @@ with st.form("customer_form"):
 if submitted:
 
     try:
-        response = requests.post(
-            API_URL,
-            json=customer_data,
-            timeout=30
+        # Convert customer input into DataFrame
+        input_df = pd.DataFrame([customer_data])
+
+        # Feature Engineering
+        input_df["AverageMonthlyUsage"] = (
+            input_df["MonthlyMinutes"] /
+            input_df["MonthsInService"].replace(0, np.nan)
         )
 
-        response.raise_for_status()
-        result = response.json()
+        input_df["OverageRatio"] = (
+            input_df["OverageMinutes"] /
+            (input_df["MonthlyMinutes"] + 1)
+        )
+
+        input_df["RetentionEngagement"] = (
+            (input_df["RetentionCalls"] > 0) |
+            (input_df["RetentionOffersAccepted"] > 0)
+        ).astype(int)
+
+        # Apply preprocessing
+        processed_data = preprocessor.transform(input_df)
+
+        # Make prediction
+        prediction = model.predict(processed_data)[0]
 
         st.subheader("Prediction Result")
 
-        if result["churn_status"] == "Yes":
+        if prediction == 1:
             st.error("⚠️ Customer is likely to Churn!")
 
         else:
